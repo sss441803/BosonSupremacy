@@ -1,69 +1,39 @@
 import numpy as np
-import cupy as cp
-from tqdm import tqdm
 from scipy.special import factorial
 from scipy.linalg import sqrtm, svd, block_diag, schur
-from math import ceil
 import argparse
 import time
-import os
-from filelock import FileLock
-from mpi4py import MPI
-os.environ["CUPY_TF32"] = "0"
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--d', type=int, help='d for calculating the MPS before random displacement. Maximum number of photons per mode before displacement - 1.')
 parser.add_argument('--chi', type=int, help='Bond dimension.')
-parser.add_argument('--rpn', type=int, help="Ranks per node.", default=0)
-parser.add_argument('--gpn', type=int, help="GPUs per node.", default=0)
+parser.add_argument('--dir', type=str, help="Root directory.", default=0)
 args = vars(parser.parse_args())
 
 d = args['d']
 chi = args['chi']
-ranks_per_node = args['rpn']
-gpus_per_node = args['gpn']
+rootdir = args['dir']
 
-comm = MPI.COMM_WORLD
-rank = comm.Get_rank()
-
-gpu = (rank % ranks_per_node) % gpus_per_node
-print('Rank {} using GPU {}.'.format(rank, gpu))
-cp.cuda.Device(gpu).use()
-
-complex_type = 'complex128'
-
-kernel_file = open('direct_mps_kernels.cu')
-kernel_string = kernel_file.read()
-kernel_file.close()
-sigma_select_cfloat = cp.RawKernel(kernel_string, 'sigma_select_cfloat')
-sigma_select_cdouble = cp.RawKernel(kernel_string, 'sigma_select_cdouble')
+complex_type = 'complex64'
 
 def Sigma_select(Sigma, target):
-    max_blocks = 65535
+    batch_size = 65535
     n_batch, n_select = target.shape
-    n_len = Sigma.shape[0]
-    target = cp.array(target, dtype='int32')
-    Sigma = cp.array(Sigma, dtype=complex_type)
-    Sigma2 = cp.zeros([n_batch, n_select, n_select], dtype=complex_type)
-    threadsperblock = (4, 4, 16)
-    blockspergrid = (ceil(n_select/4), ceil(n_select/4), ceil(n_batch/16))
-    if complex_type == 'complex64':
-        sigma_select = sigma_select_cfloat
-    elif complex_type == 'complex128':
-        sigma_select = sigma_select_cdouble
-    else:
-        raise ValueError
-    for superblock_id in range(blockspergrid[2] // max_blocks + 1):
-        begin_block = superblock_id * max_blocks
-        end_block = min((superblock_id + 1) * max_blocks, blockspergrid[2])
-        begin_batch = begin_block * 16
-        end_batch = min(n_batch, end_block * 16)
-        launch_n_batch = end_batch - begin_batch
-        launch_blockspergrid = (blockspergrid[0], blockspergrid[1], end_block - begin_block)
-        launch_idx = target[begin_batch : end_batch]
-        launch_Sigma2 = Sigma2[begin_batch : end_batch]
-        # print(launch_idx, Sigma, launch_blockspergrid, threadsperblock, begin_batch, end_batch)
-        sigma_select(launch_blockspergrid, threadsperblock, (launch_n_batch, n_select, n_len, Sigma, launch_idx, launch_Sigma2))
+    # n_len = Sigma.shape[0]
+    Sigma2 = np.zeros([n_batch, n_select, n_select], dtype=complex_type)
+    for batch_id in range(n_batch // batch_size + 1):
+        begin = batch_id * batch_size
+        end = min((batch_id + 1) * batch_size, n_batch)
+        batch_target = target[begin : end]
+        # cols = np.repeat(np.copy(batch_target) * n_len, n_select, axis=1) + np.tile(batch_target, (1, n_select))
+        # cols = cols.reshape(-1)
+        # rows = np.arange(batch_size * n_select**2)
+        # data = np.ones(batch_size * n_select**2)
+        # sparse_matrix = csr_matrix((data, (rows, cols)), shape=(batch_size*n_select**2, n_len**2))
+        # Sigma2 = sparse_matrix.dot(Sigma.reshape(-1))
+        rows = np.repeat(batch_target, n_select, axis=1).reshape(-1)
+        cols = np.tile(batch_target, (1, n_select)).reshape(-1)
+        Sigma2[begin : end] = Sigma[rows, cols].reshape(end - begin, n_select, n_select)
     return Sigma2
     
 def push_to_end(array):
@@ -150,10 +120,10 @@ def hafnian(A):
     n_batch = A.shape[0]
 
     if matshape == (0, 0):
-        return cp.ones(n_batch, dtype='complex64')
+        return np.ones(n_batch, dtype='complex64')
     
     if matshape[0] % 2 != 0:
-        return cp.zeros(n_batch, dtype='complex64')
+        return np.zeros(n_batch, dtype='complex64')
     
     '''removed case where it is identity'''
     if matshape[0] == 2:
@@ -180,12 +150,12 @@ def recursive_hafnian(A):  # pragma: no cover
         raise ValueError("Matrix size must be even")
 
     n = A.shape[1] // 2
-    z = cp.zeros((n_batch, n * (2 * n - 1), n + 1), dtype=A.dtype)
+    z = np.zeros((n_batch, n * (2 * n - 1), n + 1), dtype=A.dtype)
     for j in range(1, 2 * n):
         ind = j * (j - 1) // 2
         for k in range(j):
             z[:, ind + k, 0] = A[:, j, k]
-    g = cp.zeros([n_batch, n + 1], dtype=A.dtype)
+    g = np.zeros([n_batch, n + 1], dtype=A.dtype)
     g[:, 0] = 1
     return solve(z, 2 * n, 1, g, n)
 
@@ -195,7 +165,7 @@ def solve(b, s, w, g, n):  # pragma: no cover
     n_batch = b.shape[0]
     if s == 0:
         return w * g[:, n]
-    c = cp.zeros((n_batch, (s - 2) * (s - 3) // 2, n + 1), dtype=g.dtype)
+    c = np.zeros((n_batch, (s - 2) * (s - 3) // 2, n + 1), dtype=g.dtype)
     i = 0
     for j in range(1, s - 2):
         for k in range(j):
@@ -321,17 +291,14 @@ def get_cumsum_kron(sq_cov, L, chi = 100, max_dim = 10 ** 5, cutoff = 6, err_tol
         num = num[idx][::-1]
         rev_time += time.time() - start
 
-    print('loop time ', kron_time, cart_time, select_time, sort_time, rev_time)
+    # print('loop time ', kron_time, cart_time, select_time, sort_time, rev_time)
             
     len_ = min(chi, len(res))
     idx = np.argsort(res)[-len_:]
     idx_sorted = idx[np.argsort(res[idx])]
     res = res[idx_sorted][::-1]
     num = num[idx_sorted][::-1]
-    
-    # res = cp.asnumpy(res)
-    # num = cp.asnumpy(num)
-    print(res.shape, num.shape)
+    # print(res.shape, num.shape)
 
     return res, num, S
 
@@ -354,7 +321,7 @@ def get_target(num):
     num = np.array(num)
     for i in range(n_len):
         vals_n = num[:, i]
-        # vals_n = cp.array(n_[:, i])
+        # vals_n = np.array(n_[:, i])
         idx_end += vals_n
         # print(idx_begin, idx_end)
         mask = idx_x >= idx_begin.reshape(-1, 1)
@@ -362,32 +329,29 @@ def get_target(num):
         # print(mask)
         target += mask * (i + 1)
         idx_begin = np.copy(idx_end)
-    return cp.array(target, dtype='int32')
+    return np.array(target, dtype='int32')
 
 def A_elem(Sigma, target, denominator, max_memory_in_gb):
-    print(target.shape)
+    # print(target.shape)
     n_batch, n_select = target.shape
-    all_haf = cp.zeros([0], dtype='complex64')
+    all_haf = np.zeros([0], dtype='complex64')
     if n_select == 0:
         n_batch_max = 99999999999
     else:
         n_batch_max = int(max_memory_in_gb * (10 ** 9) // (n_select ** 2 * 8))
-    print(n_batch_max)
+    # print(n_batch_max)
     sigma_time = 0
     haf_time = 0
-    for begin_batch in tqdm(range(0, n_batch, n_batch_max)):
+    for begin_batch in range(0, n_batch, n_batch_max):
         end_batch = min(n_batch, begin_batch + n_batch_max)
         start = time.time()
         Sigma2 = Sigma_select(Sigma, target[begin_batch : end_batch])
-        cp.cuda.runtime.deviceSynchronize()
         sigma_time += time.time() - start
         start = time.time()
         haf = hafnian(Sigma2).astype('complex64')
-        # haf = cp.zeros([Sigma2.shape[0]], dtype='complex64')
-        cp.cuda.runtime.deviceSynchronize()
         haf_time += time.time() - start
         # print(haf)
-        all_haf = cp.append(all_haf, haf)
+        all_haf = np.append(all_haf, haf)
     return all_haf / denominator, haf_time, sigma_time
 
 def get_U2_sq_U1(S_l, S_r):
@@ -412,36 +376,14 @@ def get_U2_sq_U1(S_l, S_r):
 
 if __name__ == "__main__":
 
-    rootdir = "/home/minzhaoliu/BosonSupremacy/data_S15/"
     path = rootdir + f"d_{d}_chi_{chi}/"
     sq_cov = np.load(rootdir + "sq_cov.npy")
     cov = np.load(rootdir + "cov.npy")
     sq_array = np.load(rootdir + "sq_array.npy")
     M = len(cov) // 2
 
-    if not os.path.isfile(path + 'active_MPS_sites.npy'):
-        if rank == 0:
-            if not os.path.isdir(path):
-                os.mkdir(path)
-            active_sites = np.zeros(M, dtype='int32')
-            np.save(path + 'active_MPS_sites.npy', active_sites)
-
-        completed = True
-        comm.bcast(completed, root=0)
-
-    while True:
-
-        with FileLock(path + 'active_MPS_sites.npy.lock'):
-            print(f'Rank {rank} acquired lock.')
-            active_sites = np.load(path + 'active_MPS_sites.npy')
-            uncomputed_sites = np.where(active_sites == 0)[0]
-            if uncomputed_sites.shape[0] == 0:
-                print(f'Rank {rank} all completed.')
-                quit()
-            compute_site = uncomputed_sites[0]
-            active_sites[compute_site] = 1
-            np.save(path + 'active_MPS_sites.npy', active_sites)
-            print(f'Computing site {compute_site}.')
+    for compute_site in range(M):
+        print('mode: ', compute_site)
 
         real_start = time.time()
 
@@ -454,7 +396,7 @@ if __name__ == "__main__":
         _, S_r = williamson(sq_cov)
 
         Gamma = np.zeros([chi, chi, d], dtype='complex64')
-        Lambda = cp.zeros([chi], dtype='float32')
+        Lambda = np.zeros([chi], dtype='float32')
 
 
 
@@ -469,21 +411,22 @@ if __name__ == "__main__":
             Sigma = get_Sigma(U2, sq, U1)
             left_target = get_target(num)
             left_sum = np.sum(num, axis=1)
-            left_denominator = cp.sqrt(cp.product(cp.array(factorial(num)), axis=1))
+            left_denominator = np.sqrt(np.product(np.array(factorial(num)), axis=1))
             Z = np.sqrt(np.prod(np.cosh(sq)))
-            Lambda[:len(res)] = cp.array(np.sqrt(res))
+            Lambda[:len(res)] = np.array(np.sqrt(res))
             for j in np.arange(d):
+                print('j: ', j)
                 for size in np.arange(np.max(left_sum) + 1):
                     left_idx = np.where(left_sum == size)[0]
                     if (Lambda[left_idx] <= err_tol).all():
                         continue
                     n_batch = left_idx.shape[0]
                     '''one is already added to the left charge in function get_target'''
-                    target = cp.append(cp.zeros([n_batch, j], dtype='int32'), left_target[:, :size][left_idx], axis=1)
-                    denominator = cp.sqrt(factorial(j)) * left_denominator[left_idx]
+                    target = np.append(np.zeros([n_batch, j], dtype='int32'), left_target[:, :size][left_idx], axis=1)
+                    denominator = np.sqrt(factorial(j)) * left_denominator[left_idx]
                     haf, haf_time, sigma_time = A_elem(Sigma, target, denominator, max_memory_in_gb)
                     tot_haf_time += haf_time
-                    Gamma[0, cp.asnumpy(left_idx), j] = cp.asnumpy(haf / Z / Lambda[left_idx])
+                    Gamma[0, left_idx, j] = haf / Z / Lambda[left_idx]
 
         elif compute_site == M - 1:
 
@@ -491,8 +434,8 @@ if __name__ == "__main__":
             num_pre = num_pre.reshape(num_pre.shape[0], -1)
             S_r = np.load(path + f'S_{compute_site - 1}.npy')
             right_target = get_target(num_pre)
-            right_sum = cp.array(np.sum(num_pre, axis=1))
-            right_denominator = cp.sqrt(cp.product(cp.array(factorial(num_pre)), axis=1))
+            right_sum = np.array(np.sum(num_pre, axis=1))
+            right_denominator = np.sqrt(np.product(np.array(factorial(num_pre)), axis=1))
 
             S_l = np.zeros((0, 0))
             U2, sq, U1 = get_U2_sq_U1(S_l, S_r)
@@ -500,29 +443,30 @@ if __name__ == "__main__":
             Sigma = get_Sigma(U2, sq, U1)
 
             for j in np.arange(d):
-                for size in np.arange(int(cp.nanmax(right_sum)) + 1):
-                    right_idx = cp.where(right_sum == size)[0]
+                print('j: ', j)
+                for size in np.arange(int(np.nanmax(right_sum)) + 1):
+                    right_idx = np.where(right_sum == size)[0]
                     n_batch = right_idx.shape[0]
                     if size == 0 and j == 0:
-                        Gamma[cp.asnumpy(right_idx), 0, j] = cp.asnumpy(cp.ones(n_batch) / Z)
+                        Gamma[right_idx, 0, j] = np.ones(n_batch) / Z
                         continue
 
-                    target = cp.copy(right_target[:, :size][right_idx])
+                    target = np.copy(right_target[:, :size][right_idx])
                     if size == 0:
-                        target = cp.zeros([n_batch, 0], dtype='int32')
-                    target = cp.append(cp.zeros([n_batch, j], dtype=int), target, axis=1)
-                    denominator = cp.sqrt(factorial(j)) * right_denominator[right_idx]
+                        target = np.zeros([n_batch, 0], dtype='int32')
+                    target = np.append(np.zeros([n_batch, j], dtype=int), target, axis=1)
+                    denominator = np.sqrt(factorial(j)) * right_denominator[right_idx]
                     haf, haf_time, sigma_time = A_elem(Sigma, target, denominator, max_memory_in_gb)
-                    Gamma[cp.asnumpy(right_idx), 0, j] = cp.asnumpy(haf / Z)
+                    Gamma[right_idx, 0, j] = haf / Z
 
         else:
                     
             num_pre = np.load(path + f'num_{compute_site - 1}.npy')
             res_pre = np.load(path + f'res_{compute_site - 1}.npy')
             S_r = np.load(path + f'S_{compute_site - 1}.npy')
-            right_target = cp.array(push_to_end(cp.asnumpy(get_target(num_pre))))
-            right_sum = cp.array(np.sum(num_pre, axis=1))
-            right_denominator = cp.sqrt(cp.product(cp.array(factorial(num_pre)), axis=1))
+            right_target = np.array(push_to_end(get_target(num_pre)))
+            right_sum = np.array(np.sum(num_pre, axis=1))
+            right_denominator = np.sqrt(np.product(np.array(factorial(num_pre)), axis=1))
 
             num = np.load(path + f'num_{compute_site}.npy')
             res = np.load(path + f'res_{compute_site}.npy')
@@ -531,53 +475,53 @@ if __name__ == "__main__":
             num = num.reshape(num.shape[0], -1)
             left_target = get_target(num)
             left_n_select = left_target.shape[1]
-            left_sum = cp.array(np.sum(num, axis=1))
-            full_sum = cp.repeat(left_sum.reshape(-1, 1), right_sum.shape[0], axis=1) + cp.repeat(right_sum.reshape(1, -1), left_sum.shape[0], axis=0)
-            left_denominator = cp.sqrt(cp.product(cp.array(factorial(num)), axis=1))
+            left_sum = np.array(np.sum(num, axis=1))
+            full_sum = np.repeat(left_sum.reshape(-1, 1), right_sum.shape[0], axis=1) + np.repeat(right_sum.reshape(1, -1), left_sum.shape[0], axis=0)
+            left_denominator = np.sqrt(np.product(np.array(factorial(num)), axis=1))
             res = res[res > err_tol]
             U2, sq, U1 = get_U2_sq_U1(S_l, S_r) # S_l: left in equation, S_r : right in equation
             Sigma = get_Sigma(U2, sq, U1)
             Z = np.sqrt(np.prod(np.cosh(sq)))
-            Lambda[:len(res)] = cp.array(np.sqrt(res))
+            Lambda[:len(res)] = np.array(np.sqrt(res))
 
             for j in np.arange(d):
-                gpu_Gamma = cp.zeros([chi, chi], dtype='complex64')
-                for size in np.arange(int(cp.nanmax(full_sum)) + 1):
-                    left_idx, right_idx = cp.where(full_sum == size)
+                print('j: ', j)
+                gpu_Gamma = np.zeros([chi, chi], dtype='complex64')
+                for size in np.arange(int(np.nanmax(full_sum)) + 1):
+                    left_idx, right_idx = np.where(full_sum == size)
                     n_batch = left_idx.shape[0]
                     if (Lambda[left_idx] <= err_tol).all():
                         continue
                     if size == 0 and j == 0:
-                        gpu_Gamma[right_idx, left_idx] = cp.ones(n_batch) / Z / Lambda[left_idx]
+                        gpu_Gamma[right_idx, left_idx] = np.ones(n_batch) / Z / Lambda[left_idx]
                         continue
                     if size == 0:
                         n_batch_max = 99999999999
                     else:
                         n_batch_max = int(max_memory_in_gb * (10 ** 9) // (size * 8))
-                    print('n_batch_max: ', n_batch_max)
-                    for begin_batch in tqdm(range(0, n_batch, n_batch_max)):
+                    # print('n_batch_max: ', n_batch_max)
+                    for begin_batch in range(0, n_batch, n_batch_max):
                         end_batch = min(n_batch, begin_batch + n_batch_max)
-                        target = cp.zeros([end_batch - begin_batch, size], dtype='int32')
-                        target[:, :left_n_select] = cp.copy(left_target[:, :size][left_idx[begin_batch : end_batch]])
-                        right_target_chosen = cp.copy(right_target[:, -size:][right_idx[begin_batch : end_batch]])
+                        target = np.zeros([end_batch - begin_batch, size], dtype='int32')
+                        target[:, :left_n_select] = np.copy(left_target[:, :size][left_idx[begin_batch : end_batch]])
+                        right_target_chosen = np.copy(right_target[:, -size:][right_idx[begin_batch : end_batch]])
                         if size == 0:
-                            right_target_chosen = cp.zeros([end_batch - begin_batch, 0], dtype='int32')
+                            right_target_chosen = np.zeros([end_batch - begin_batch, 0], dtype='int32')
                         right_n_select = right_target_chosen.shape[1]
-                        non_zero_locations = cp.where(right_target_chosen != 0)
+                        non_zero_locations = np.where(right_target_chosen != 0)
                         right_target_chosen[non_zero_locations] += num.shape[1]
                         target[:, -right_n_select:] += right_target_chosen
-                        target = cp.append(cp.zeros([end_batch - begin_batch, j], dtype=int), target, axis=1)
-                        denominator = cp.sqrt(factorial(j)) * left_denominator[left_idx[begin_batch : end_batch]] * right_denominator[right_idx[begin_batch : end_batch]]
+                        target = np.append(np.zeros([end_batch - begin_batch, j], dtype=int), target, axis=1)
+                        denominator = np.sqrt(factorial(j)) * left_denominator[left_idx[begin_batch : end_batch]] * right_denominator[right_idx[begin_batch : end_batch]]
                         start = time.time()
                         haf, haf_time, sigma_time = A_elem(Sigma, target, denominator, max_memory_in_gb)
                         tot_a_elem_time += time.time() - start
                         tot_haf_time += haf_time
                         tot_sigma_time += sigma_time
                         gpu_Gamma[right_idx[begin_batch : end_batch], left_idx[begin_batch : end_batch]] = haf / Z / Lambda[left_idx[begin_batch : end_batch]]
-                Gamma[:, :, j] = cp.asnumpy(gpu_Gamma)
-
+                Gamma[:, :, j] = gpu_Gamma
         print('Total {}, a_elem {}, haf {}, sigma {}.'.format(time.time() - real_start, tot_a_elem_time, tot_haf_time, tot_sigma_time))
 
         np.save(path + f"Gamma_{compute_site}.npy", Gamma)
         if compute_site < M - 1:
-            np.save(path + f"Lambda_{compute_site}.npy", cp.asnumpy(Lambda))
+            np.save(path + f"Lambda_{compute_site}.npy", Lambda)

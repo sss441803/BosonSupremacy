@@ -1,11 +1,6 @@
 import numpy as np
-import cupy as cp
 from scipy.linalg import block_diag, sqrtm, schur
-from filelock import FileLock
 import argparse
-import time
-from mpi4py import MPI
-from tqdm import tqdm
 import os
 
 def nothing_function(object):
@@ -23,9 +18,6 @@ d = args['d']
 chi = args['chi']
 rootdir = args['dir']
 
-comm = MPI.COMM_WORLD
-rank = comm.Get_rank()
-cp.cuda.Device(rank % 4).use()
 
 
 def sympmat(N, dtype=np.float64):
@@ -111,28 +103,28 @@ def get_cumsum_kron(sq_cov, L, chi = 100, max_dim = 10 ** 5, cutoff = 6, err_tol
 
     d[d < 0] = 0
 
-    res = cp.array(thermal_photons(d[0], cutoff))
-    num = cp.arange(cutoff, dtype='int8')
+    res = thermal_photons(d[0], cutoff)
+    num = np.arange(cutoff, dtype='int8')
     
     for i in range(1, M - L):
-        res = cp.outer(res, cp.array(thermal_photons(d[i], cutoff))).reshape(-1)
-        keep_idx = cp.where(res > err_tol)[0]
+        res = np.outer(res, np.array(thermal_photons(d[i], cutoff))).reshape(-1)
+        keep_idx = np.where(res > err_tol)[0]
         res = res[keep_idx]
-        idx = cp.argsort(res)[-min(len(res), max_dim):]       
+        idx = np.argsort(res)[-min(len(res), max_dim):]       
         res = res[idx][::-1]
         '''Instead of creating the full cartesian product, use the keep_idx variable to reduce the amount of data we need to generate and write a custom cuda kernel'''
         if len(num.shape) == 1:
             num = num.reshape(-1, 1)
         keep_idx = keep_idx[idx][::-1]
-        num = cp.concatenate([num[keep_idx // cutoff], cp.arange(cutoff).reshape(-1, 1)[keep_idx % cutoff]], axis=1)
+        num = np.concatenate([num[keep_idx // cutoff], np.arange(cutoff).reshape(-1, 1)[keep_idx % cutoff]], axis=1)
             
     len_ = min(chi, len(res))
-    idx = cp.argsort(res)[-len_:]
+    idx = np.argsort(res)[-len_:]
     idx_sorted = idx[np.argsort(res[idx])]
     res = res[idx_sorted][::-1]
     num = num[idx_sorted][::-1]
 
-    return cp.asnumpy(res).astype('float16'), cp.asnumpy(num).astype('int8'), S
+    return res.astype('float16'), num.astype('int8'), S
 
 
 
@@ -145,32 +137,16 @@ if __name__ == "__main__":
     # sq_array = np.load(rootdir + "sq_array.npy")
     M = len(cov) // 2
 
-    if rank == 0:
-        if not os.path.isdir(path):
-            os.mkdir(path)
-        active_sites = np.zeros(M - 1, dtype='int32')
-        np.save(path + 'active_kron_sites.npy', active_sites)
-
-    completed = True
-    comm.bcast(completed, root=0)
+    if not os.path.isdir(path):
+        os.mkdir(path)
+    active_sites = np.zeros(M - 1, dtype='int32')
+    np.save(path + 'active_kron_sites.npy', active_sites)
 
     max_memory_in_gb = 1
     max_dim = 10 ** 5
 
-    while True:
-
-        with FileLock(path + 'active_kron_sites.npy.lock'):
-            print(f'Rank {rank} acquired lock.')
-            active_sites = np.load(path + 'active_kron_sites.npy')
-            uncomputed_sites = np.where(active_sites == 0)[0]
-            if uncomputed_sites.shape[0] == 0:
-                print(f'Rank {rank} all completed.')
-                quit()
-            compute_site = uncomputed_sites[-1]
-            active_sites[compute_site] = 1
-            np.save(path + 'active_kron_sites.npy', active_sites)
-            print(f'Computing site {compute_site}.')
-            
+    for compute_site in range(M - 1):
+        
         res, num, S_l = get_cumsum_kron(sq_cov, compute_site + 1, max_dim = max_dim, chi = chi, cutoff = d)
         print(compute_site, np.sum(res))
         np.save(path + f'res_{compute_site}.npy', res)

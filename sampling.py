@@ -5,6 +5,11 @@ import time
 import argparse
 import torch
 from scipy.linalg import expm
+import warnings
+import os
+os.environ["CUPY_TF32"] = "1"
+
+warnings.filterwarnings("ignore", category=UserWarning)
 
 from decimal import *
 
@@ -45,7 +50,7 @@ def sampling(path, dd, Lambda, sqrtW, samples_in_parallel, compare=False):
     M = comm.bcast(M, root=0)
     print('Done communicating')
     np_Lambda = Lambda
-    np_Gamma = Gamma
+    # np_Gamma = Gamma
     Lambda = cp.array(Lambda)
     if rank == 0:
         print('Generating random displacements')
@@ -213,6 +218,7 @@ def batch_displaces(N, alphas): # N is the dim
     for i in tqdm(range(M)):
         alpha = alphas[:, i].reshape(-1, 1, 1)
         results.append(torch.linalg.matrix_exp(torch.tensor(alpha * a_h - np.conj(alpha) * a).cuda()).cpu().numpy())
+        # results.append(expm(alpha * a_h - np.conj(alpha) * a))
     results = np.transpose(np.array(results), (1, 0, 2, 3))
     print(results.shape)
     return results
@@ -232,7 +238,7 @@ def batch_mu_to_alpha(mu, hbar=2):
 
 if __name__ == "__main__":
     
-    rootdir = '/project2/liangjiang/mliu6/DirectMPS/data_USTC_larger2/'
+    rootdir = '/home/minzhaoliu/BosonSupremacy/data_S15/'
     path = rootdir + f'd_{d}_chi_{chi}/'
     sq_array = np.load(rootdir + "sq_array.npy")
     sq_cov = np.load(rootdir + "sq_cov.npy")
@@ -244,10 +250,11 @@ if __name__ == "__main__":
     Lambda = np.zeros([chi, M - 1], dtype='float32')
     for i in range(M - 1):
         Lambda[:, i] = np.load(path + f"Lambda_{i}.npy")
-    samples_per_rank = 10000
+    samples_per_rank = 5000
     
     samples = np.zeros([0, M], dtype='int8')
-    for subsamples in range(20):
+    # samples = np.load(rootdir + f"samples_d_{d}_dd_{dd}_chi_{chi}_{rank}.npy")
+    for subsamples in range(1):
         subsamples = sampling(path, dd, Lambda, sqrtW, samples_per_rank, False)
         samples = np.concatenate([samples, subsamples], axis=0)
         np.save(rootdir + f"samples_d_{d}_dd_{dd}_chi_{chi}_{rank}.npy", samples)

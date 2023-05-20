@@ -1,7 +1,26 @@
 #include <cupy/complex.cuh>
 
 extern "C" __global__ __launch_bounds__(256, 2)
-void sigma_select(const int n_batch,
+void sigma_select_cfloat(const int n_batch,
+            const int n_select,
+            const int n_len,
+            const complex<float> *Sigma,
+            const int *idx,
+            complex<float> *Sigma2) {
+
+    int n_idx = blockIdx.x * 4 + threadIdx.x;
+    int m_idx = blockIdx.y * 4 + threadIdx.y;
+    int l_idx = blockIdx.z * 16 + threadIdx.z;
+
+    if (l_idx < n_batch && m_idx < n_select && n_idx < n_select) {
+        int m_target = idx[l_idx * n_select + m_idx];
+        int n_target = idx[l_idx * n_select + n_idx];
+        Sigma2[l_idx * n_select * n_select + m_idx * n_select + n_idx] = Sigma[m_target * n_len + n_target];
+    }
+}
+
+extern "C" __global__ __launch_bounds__(256, 2)
+void sigma_select_cdouble(const int n_batch,
             const int n_select,
             const int n_len,
             const complex<double> *Sigma,
