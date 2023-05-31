@@ -19,6 +19,8 @@ The majority of the program is written using python, requiring the following pyt
 * tqdm
 * requests (for downloading data from Xanadu in `Xanadu_download.py`)
 * pandas (for loading the squeezing parameters from xlsx file of Jiuzhang3 in `make_cov.py`)
+* strawberryfields (data analysis only)
+* thewalrus (data analysis only)
 
 For GPU implementations, we need:
 * cupy
@@ -26,7 +28,9 @@ For GPU implementations, we need:
 * mpi4py
 * filelock
 
-We recommend anaconda for python virtual environment management, and it is best to start a clean environment for this project.
+We recommend Anaconda for python virtual environment management, and it is best to start a clean environment for this project.
+
+For threshold detector Torontonian analysis of Jiuzhang samples, a Julia program `compute_torontonian.jl` is used (https://arxiv.org/abs/2207.10058). Julia can also be installed using Anaconda within the same virtual environment.
 
 ### CuPy Issues
 If GPU implementations are used, please insure that cupy is installed properly. Normally, you shouldn't have to install cudatoolkit before hand, as the default method of installing cupy from conda 
@@ -50,7 +54,7 @@ The current implementation does not scale to 1000 GPUs or ranks on the Polaris s
 MPI communications with cupy arrays has unexpected behaviors (therefore, we use numpy buffers exclusively for inter-rank communications). Not tested on other systems and therefore source of issue is unknown.
 
 ### Strawberryfields adn Thewalrus Issues
-Although our code base does not require the strawberryfields or thewalrus libraries, many photonics quantum computing projects may need them. However, we experimence some conflicts with other libraries, particularly breaking the symbols with numpy for certain linear algebra libraries such as Intel MLK.
+Although our simulation code base does not require the strawberryfields or thewalrus libraries, benchmarking may need them. However, we experimence some conflicts with other libraries, particularly breaking the symbols with numpy for certain linear algebra libraries such as Intel MKL. If such issue occurs, we recommend creating a separate environment for data analysis with the two libraries installed.
 
 ### PyTorch Removal
 We use PyTorch in our sampling algorithm for matrix exponentiation on GPUs. This is needed when creating the displacement operator from the ladder operators. The benefit of using GPUs is less significant when the bond dimension is large, or when the number of samples to generate is small. It can be removed and substituted with cpu matrix exponentiation from `scipy.linalg.expm`.
@@ -238,3 +242,20 @@ python kron_cpu.py --d $d --chi $chi --dir $rootdir
 python MPS_cpu.py --d $d --chi $chi --dir $rootdir
 python sampling_cpu.py --N $N --n $n --iter $iter --d $d --dd $dd --chi $chi --dir $rootdir
 ```
+
+### Data Analysis
+The analysis code is located in the `analysis` folder:
+```bash
+cd analysis
+```
+
+For Jiuzhang data analysis, we compute torontonians of samples from different photon click sectors. It saves “tors_{N}.npy” for the N sector. The code from https://github.com/polyquantique/torontonian-julia is needed. We will clone the repository minimally:
+```bash
+git clone --depth=1 --branch=master https://github.com/polyquantique/torontonian-julia.git
+rm -rf ./torontonian-julia/.git
+```
+We then run the program:
+```bash
+julia compute_torontonian.jl $dir <file/name/for/npz/samples>
+```
+where `<file/name/for/npz/samples>` should only be the file name as does not include the directory (will be taken care of by argument `dir`).
