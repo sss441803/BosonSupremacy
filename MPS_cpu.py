@@ -379,7 +379,6 @@ if __name__ == "__main__":
     path = rootdir + f"d_{d}_chi_{chi}/"
     sq_cov = np.load(rootdir + "sq_cov.npy")
     cov = np.load(rootdir + "cov.npy")
-    sq_array = np.load(rootdir + "sq_array.npy")
     M = len(cov) // 2
 
     for compute_site in range(M):
@@ -499,7 +498,6 @@ if __name__ == "__main__":
                         n_batch_max = 99999999999
                     else:
                         n_batch_max = int(max_memory_in_gb * (10 ** 9) // (size * 8))
-                    # print('n_batch_max: ', n_batch_max)
                     for begin_batch in range(0, n_batch, n_batch_max):
                         end_batch = min(n_batch, begin_batch + n_batch_max)
                         target = np.zeros([end_batch - begin_batch, size], dtype='int32')

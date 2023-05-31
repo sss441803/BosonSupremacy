@@ -16,15 +16,19 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--d', type=int, help='d for calculating the MPS before random displacement. Maximum number of photons per mode before displacement - 1.')
 parser.add_argument('--chi', type=int, help='Bond dimension.')
 parser.add_argument('--dir', type=str, help="Root directory.", default=0)
+parser.add_argument('--ls', type=str, help="Local scratch directory.")
+parser.add_argument('--gpn', type=int, help="Number of GPUs per node")
 args = vars(parser.parse_args())
 
 d = args['d']
 chi = args['chi']
 rootdir = args['dir']
+local_scratch = args['ls']
+gpn = args['gpn']
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
-cp.cuda.Device(rank % 4).use()
+cp.cuda.Device(rank % gpn).use()
 
 
 def sympmat(N, dtype=np.float64):
@@ -113,7 +117,6 @@ def get_cumsum_kron(sq_cov, L, chi = 100, max_dim = 10 ** 5, cutoff = 6, err_tol
     res = cp.array(thermal_photons(d[0], cutoff))
     num = cp.arange(cutoff, dtype='int8')
     
-    # for i in tqdm(range(1, M - L)):
     for i in range(1, M - L):
         res = cp.outer(res, cp.array(thermal_photons(d[i], cutoff))).reshape(-1)
         keep_idx = cp.where(res > err_tol)[0]
@@ -131,8 +134,6 @@ def get_cumsum_kron(sq_cov, L, chi = 100, max_dim = 10 ** 5, cutoff = 6, err_tol
     idx_sorted = idx[np.argsort(res[idx])]
     res = res[idx_sorted][::-1]
     num = num[idx_sorted][::-1]
-    
-    # print(res.shape, num.shape)
 
     return cp.asnumpy(res), cp.asnumpy(num), S
 
@@ -146,7 +147,7 @@ if __name__ == "__main__":
         print('traceback: ', traceback)
         print('An exception occured. Aborting MPI')
         comm.Abort()
-    # sys.excepthook = mpiabort_excepthook
+    sys.excepthook = mpiabort_excepthook
 
     sq_cov = np.load(rootdir + "sq_cov.npy")
     cov = np.load(rootdir + "cov.npy")
@@ -156,15 +157,13 @@ if __name__ == "__main__":
 
     if rank != 0:
         compute_site = rank - 1
-        # print(f'Rank {rank} site {compute_site}.')
         res, num, S_l = get_cumsum_kron(sq_cov, compute_site + 1, max_dim = max_dim, chi = chi, cutoff = d)
-        np.save(f'/local/scratch/res_{compute_site}.npy', res)
-        np.save(f'/local/scratch/num_{compute_site}.npy', num)
-        np.save(f'/local/scratch/S_{compute_site}.npy', S_l)
+        np.save(local_scratch + f'res_{compute_site}.npy', res)
+        np.save(local_scratch + f'num_{compute_site}.npy', num)
+        np.save(local_scratch + f'S_{compute_site}.npy', S_l)
     if rank != M - 1:
         compute_site = rank
-        # print(f'Rank {rank} site {compute_site}.')
         res, num, S_l = get_cumsum_kron(sq_cov, compute_site + 1, max_dim = max_dim, chi = chi, cutoff = d)
-        np.save(f'/local/scratch/res_{compute_site}.npy', res)
-        np.save(f'/local/scratch/num_{compute_site}.npy', num)
-        np.save(f'/local/scratch/S_{compute_site}.npy', S_l)
+        np.save(local_scratch + f'res_{compute_site}.npy', res)
+        np.save(local_scratch + f'num_{compute_site}.npy', num)
+        np.save(local_scratch + f'S_{compute_site}.npy', S_l)

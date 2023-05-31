@@ -2,3 +2,5 @@
 *.out
 job
 *.slurm
+*.npy
+*.lock

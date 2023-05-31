@@ -22,23 +22,19 @@ tqdm = nothing_function
 parser = argparse.ArgumentParser()
 parser.add_argument('--d', type=int, help='d for calculating the MPS before random displacement. Maximum number of photons per mode before displacement - 1.')
 parser.add_argument('--chi', type=int, help='Bond dimension.')
-parser.add_argument('--rpn', type=int, help="Ranks per node.", default=0)
 parser.add_argument('--gpn', type=int, help="GPUs per node.", default=0)
 parser.add_argument('--dir', type=str, help="Root directory.", default=0)
 args = vars(parser.parse_args())
 
 d = args['d']
 chi = args['chi']
-ranks_per_node = args['rpn']
-gpus_per_node = args['gpn']
+gpn = args['gpn']
 rootdir = args['dir']
 path = rootdir + f'd_{d}_chi_{chi}/'
 if not os.path.isdir(path) and rank==0:
     os.mkdir(path)
 
-gpu = (rank % ranks_per_node) % gpus_per_node
-print('Rank {} using GPU {}.'.format(rank, gpu))
-cp.cuda.Device(gpu).use()
+cp.cuda.Device(rank % gpn).use()
 
 
 

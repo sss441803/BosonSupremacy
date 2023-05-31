@@ -1,15 +1,22 @@
 import numpy as np
 from tqdm import tqdm
+import time
 import argparse
 from scipy.linalg import expm
 
 parser = argparse.ArgumentParser()
+parser.add_argument('--N', type=int, help='Total number of samples.')
+parser.add_argument('--n', type=int, help='Number of samples per batch.')
+parser.add_argument('--iter', type=int, help='Number of iterations of sampling.')
 parser.add_argument('--d', type=int, help='d for calculating the MPS before random displacement. Maximum number of photons per mode before displacement - 1.')
 parser.add_argument('--dd', type=int, help='d for after random displacement. Maximum number of photons per mode that can be sampled - 1.')
 parser.add_argument('--chi', type=int, help='Bond dimension.')
 parser.add_argument('--dir', type=str, help="Root directory.", default=0)
 args = vars(parser.parse_args())
 
+N = args['N']
+n = args['n']
+iterations = args['iter']
 d = args['d']
 dd = args ['dd']
 chi = args['chi']
@@ -70,7 +77,7 @@ def sampling(path, dd, Lambda, sqrtW, samples_in_parallel, compare=False):
             Gamma_temp = np.zeros([chi, chi, dd], dtype='complex64')
             Gamma_temp[:, :, :d] = Gamma
             temp_tensor = np.copy(tensor) # samples_in_parallel x chi
-            temp_tensor = np.einsum('Bn,nmj->Bmj', temp_tensor, Gamma_temp) # samples_in_parallel x chi x cutoff
+            temp_tensor = (temp_tensor @ Gamma_temp.reshape(chi, chi * dd)).reshape(samples_in_parallel, chi, dd)
             temp_tensor = np.einsum('Bmj,Bkj->Bmk', temp_tensor, displacements[:, i])
             pre_tensor = np.copy(temp_tensor)
             temp_tensor = np.abs(temp_tensor) ** 2
@@ -111,7 +118,7 @@ def sampling(path, dd, Lambda, sqrtW, samples_in_parallel, compare=False):
 
 
 def destroy(N):
-    data = np.sqrt(np.arange(1, N, dtype=complex))
+    data = np.sqrt(np.arange(1, N, dtype='complex64'))
     return np.diag(data, 1);
 
 def displace(N, alpha): # N is the dim
@@ -156,7 +163,6 @@ def batch_mu_to_alpha(mu, hbar=2):
 if __name__ == "__main__":
     
     path = rootdir + f'd_{d}_chi_{chi}/'
-    sq_array = np.load(rootdir + "sq_array.npy")
     sq_cov = np.load(rootdir + "sq_cov.npy")
     cov = np.load(rootdir + "cov.npy")
     thermal_cov = cov - sq_cov;
@@ -166,13 +172,12 @@ if __name__ == "__main__":
     Lambda = np.zeros([chi, M - 1], dtype='float32')
     for i in range(M - 1):
         Lambda[:, i] = np.load(path + f"Lambda_{i}.npy")
-    samples_per_rank = 5000
     
-    samples = np.zeros([0, M], dtype='int8')
-    # samples = np.load(rootdir + f"samples_d_{d}_dd_{dd}_chi_{chi}_{rank}.npy")
-    for subsamples in range(1):
-        subsamples = sampling(path, dd, Lambda, sqrtW, samples_per_rank, False)
-        samples = np.concatenate([samples, subsamples], axis=0)
-        np.save(rootdir + f"samples_d_{d}_dd_{dd}_chi_{chi}.npy", samples)
-        print(samples.shape, samples.mean(), samples[:, 0].mean(), samples[:, -1].mean())
-    # np.save(rootdir + f"samples_d_{d}_chi_{chi}_{rank}.npy", samples)
+    for i in iterations:
+        samples = np.zeros([0, M], dtype='int8')
+        for begin_batch in range(0, N, n):
+            end_batch = min(N, begin_batch + n)
+            samples_in_parallel = end_batch - begin_batch
+            subsamples = sampling(path, dd, Lambda, sqrtW, samples_in_parallel, False)
+            samples = np.concatenate([samples, subsamples], axis=0)
+            np.save(rootdir + f"samples_{i}.npy", samples)

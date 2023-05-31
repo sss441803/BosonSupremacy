@@ -134,7 +134,6 @@ if __name__ == "__main__":
     path = rootdir + f"d_{d}_chi_{chi}/"
     sq_cov = np.load(rootdir + "sq_cov.npy")
     cov = np.load(rootdir + "cov.npy")
-    # sq_array = np.load(rootdir + "sq_array.npy")
     M = len(cov) // 2
 
     if not os.path.isdir(path):
