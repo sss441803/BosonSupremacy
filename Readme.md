@@ -267,3 +267,5 @@ We then run the program:
 julia compute_torontonian.jl $dir <file/name/for/npz/samples>
 ```
 where `<file/name/for/npz/samples>` should only be the file name as does not include the directory (will be taken care of by argument `dir`).
+
+To load Jiuzhang2 and Jiuzhang3 data, use `Jiuzhang2_load_samples.py` and `Jiuzhang3_load_samples.py` to convert the provided binary files into numpy files.
