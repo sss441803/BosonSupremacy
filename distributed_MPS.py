@@ -24,6 +24,7 @@ parser.add_argument('--d', type=int, help='d for calculating the MPS before rand
 parser.add_argument('--chi', type=int, help='Bond dimension.')
 parser.add_argument('--gpn', type=int, help="GPUs per node.", default=0)
 parser.add_argument('--dir', type=str, help="Root directory.", default=0)
+parser.add_argument('--ls', type=str, help="Local scratch directory.")
 args = vars(parser.parse_args())
 
 d = args['d']
@@ -31,6 +32,7 @@ chi = args['chi']
 gpn = args['gpn']
 rootdir = args['dir']
 path = rootdir + f'd_{d}_chi_{chi}/'
+local_scratch = args['ls']
 if not os.path.isdir(path) and rank==0:
     os.mkdir(path)
 
@@ -50,18 +52,19 @@ if __name__ == "__main__":
 
     sq_cov = np.load(rootdir + "sq_cov.npy")
     cov = np.load(rootdir + "cov.npy")
-    # sq_array = np.load(rootdir + "sq_array.npy")
     M = len(cov) // 2
 
-# if not os.path.isfile(path + 'completed_MPS_sites.npy'):
+    # idle_ranks.npy keeps track of which ranks are not busy with computation
+    # This is to help determine where ranks in progress should send partial
+    # computational load to
     if rank == 0:
         for site in range(M):
             if os.path.isfile(path + f'{site}.npy'):
                 os.remove(path + f'{site}.npy')
         if not os.path.isdir(path):
             os.mkdir(path)
-        completed_sites = np.zeros(M, dtype='int32')
-        np.save(path + 'completed_MPS_sites.npy', completed_sites)
+        idle_ranks = np.zeros(M, dtype='int32')
+        np.save(path + 'idle_ranks.npy', idle_ranks)
 
     completed = True
     comm.bcast(completed, root=0)
@@ -84,12 +87,9 @@ if __name__ == "__main__":
 
     if compute_site == 0:
 
-        res = np.load(f'/local/scratch/res_{compute_site}.npy')
-        num = np.load(f'/local/scratch/num_{compute_site}.npy')
-        S_l = np.load(f'/local/scratch/S_{compute_site}.npy')
-        # res = np.load(path + f'res_{compute_site}.npy')
-        # num = np.load(path + f'num_{compute_site}.npy')
-        # S_l = np.load(path + f'S_{compute_site}.npy')
+        res = np.load(local_scratch + f'res_{compute_site}.npy')
+        num = np.load(local_scratch + f'num_{compute_site}.npy')
+        S_l = np.load(local_scratch + f'S_{compute_site}.npy')
         num = num[res > err_tol]
         res = res[res > err_tol]
         U2, sq, U1 = get_U2_sq_U1(S_l, S_r)
@@ -115,14 +115,12 @@ if __name__ == "__main__":
     elif compute_site == M - 1:
 
         try:
-            num_pre = np.load(f'/local/scratch/num_{compute_site - 1}.npy')
-            # num_pre = np.load(path + f'num_{compute_site - 1}.npy')
+            num_pre = np.load(local_scratch + f'num_{compute_site - 1}.npy')
         except:
             print('Failed. ', rank, compute_site - 1, os.listdir('/local/scratch/'))
             quit()
         num_pre = num_pre.reshape(num_pre.shape[0], -1)
-        S_r = np.load(f'/local/scratch/S_{compute_site - 1}.npy')
-        # S_r = np.load(path + f'S_{compute_site - 1}.npy')
+        S_r = np.load(local_scratch + f'S_{compute_site - 1}.npy')
         right_target = get_target(num_pre)
         right_sum = cp.array(np.sum(num_pre, axis=1))
         right_denominator = cp.sqrt(cp.product(cp.array(factorial(num_pre)), axis=1))
@@ -150,22 +148,16 @@ if __name__ == "__main__":
 
     else:
                 
-        num_pre = np.load(f'/local/scratch/num_{compute_site - 1}.npy')
-        res_pre = np.load(f'/local/scratch/res_{compute_site - 1}.npy')
-        S_r = np.load(f'/local/scratch/S_{compute_site - 1}.npy')
-        # res_pre = np.load(path + f'res_{compute_site - 1}.npy')
-        # num_pre = np.load(path + f'num_{compute_site - 1}.npy')
-        # S_r = np.load(path + f'S_{compute_site - 1}.npy')
+        num_pre = np.load(local_scratch + f'num_{compute_site - 1}.npy')
+        res_pre = np.load(local_scratch + f'res_{compute_site - 1}.npy')
+        S_r = np.load(local_scratch + f'S_{compute_site - 1}.npy')
         right_target = cp.array(push_to_end(cp.asnumpy(get_target(num_pre))))
         right_sum = cp.array(np.sum(num_pre, axis=1))
         right_denominator = cp.sqrt(cp.product(cp.array(factorial(num_pre)), axis=1, dtype='float32'))
 
-        num = np.load(f'/local/scratch/num_{compute_site}.npy')
-        res = np.load(f'/local/scratch/res_{compute_site}.npy')
-        S_l = np.load(f'/local/scratch/S_{compute_site}.npy')
-        # res = np.load(path + f'res_{compute_site}.npy')
-        # num = np.load(path + f'num_{compute_site}.npy')
-        # S_l = np.load(path + f'S_{compute_site}.npy')
+        num = np.load(local_scratch + f'num_{compute_site}.npy')
+        res = np.load(local_scratch + f'res_{compute_site}.npy')
+        S_l = np.load(local_scratch + f'S_{compute_site}.npy')
         num = num[res > err_tol]
         num = num.reshape(num.shape[0], -1)
         left_target = get_target(num)
@@ -193,7 +185,6 @@ if __name__ == "__main__":
                     n_batch_max = 99999999999
                 else:
                     n_batch_max = int(max_memory_in_gb * (10 ** 9) // (size * 8))
-                # print('n_batch_max: ', n_batch_max)
                 requests = []
                 buffers = []
                 for begin_batch in tqdm(range(0, n_batch, n_batch_max)):
@@ -221,17 +212,15 @@ if __name__ == "__main__":
                     target = cp.append(cp.zeros([end_batch - begin_batch, j], dtype='int32'), target, axis=1)
                     denominator = cp.array(cp.sqrt(factorial(j)) * left_denominator[left_idx[begin_batch : end_batch]] * right_denominator[right_idx[begin_batch : end_batch]], dtype='float32')
                     if end_batch != n_batch:
-                        # print(f'Rank {rank} looking for help')
-                        with FileLock(path + 'completed_MPS_sites.npy.lock'):
-                            completed_sites = np.load(path + 'completed_MPS_sites.npy')
-                            available_ranks = np.where(completed_sites == 1)[0]
+                        with FileLock(path + 'idle_ranks.npy.lock'):
+                            idle_ranks = np.load(path + 'idle_ranks.npy')
+                            available_ranks = np.where(idle_ranks == 1)[0]
                             target_rank = None
                             if available_ranks.shape[0] != 0:
                                 idx = np.argmin(np.abs(available_ranks - rank))
                                 target_rank = available_ranks[idx]
-                                completed_sites[target_rank] = 0
-                                np.save(path + 'completed_MPS_sites.npy', completed_sites)
-                                # print(f'rank {rank} getting help from rank {target_rank}')
+                                idle_ranks[target_rank] = 0
+                                np.save(path + 'idle_ranks.npy', idle_ranks)
                         if target_rank != None:
                             try:
                                 comm.send(True, target_rank, tag=100 + target_rank)
@@ -240,9 +229,7 @@ if __name__ == "__main__":
                                 quit()
                             comm.send(rank, target_rank, tag=1)
                             comm.send(end_batch - begin_batch, target_rank, tag=2)
-                            # print('sizes ', denominator.shape, target.shape, begin_batch, end_batch, size, j)
                             comm.send(size + j, target_rank, tag=3)
-                            # print('send sigma: ', Sigma.shape, Sigma.dtype, target_rank, end_batch - begin_batch, size + j, Sigma.shape[0])
                             comm.send(Sigma.shape[0], target_rank, tag=4)
                             comm.Send([cp.asnumpy(Sigma), MPI.C_FLOAT_COMPLEX], target_rank, tag=5)
                             comm.Send([cp.asnumpy(target), MPI.INT], target_rank, tag=6)
@@ -272,18 +259,17 @@ if __name__ == "__main__":
 
     print('Total {}, a_elem {}, haf {}, sigma {}.'.format(time.time() - real_start, tot_a_elem_time, tot_haf_time, tot_sigma_time))
 
-    np.save(f'/local/scratch/Gamma_{compute_site}.npy', Gamma)
-    np.save(f'/local/scratch/Lambda_{compute_site}.npy', Lambda)
-    # np.save(path + f'dist_Gamma_{compute_site}.npy', Gamma)
-    # np.save(path + f'dist_Lambda_{compute_site}.npy', Lambda)
+    np.save(local_scratch + f'Gamma_{compute_site}.npy', Gamma)
+    np.save(local_scratch + f'Lambda_{compute_site}.npy', Lambda)
     print('Lambda: ', compute_site, cp.sum(cp.abs(Lambda)**2))
+    # {compute_site}.npy indicates that computation for an optical mode has completed.
     np.save(path + f'{compute_site}.npy', np.ones(1))
 
-    with FileLock(path + 'completed_MPS_sites.npy.lock'):
+    with FileLock(path + 'idle_ranks.npy.lock'):
         print(f'Rank {rank} done and acquired lock.')
-        completed_sites = np.load(path + 'completed_MPS_sites.npy')
-        completed_sites[rank] = 1
-        np.save(path + 'completed_MPS_sites.npy', completed_sites)
+        idle_ranks = np.load(path + 'idle_ranks.npy')
+        idle_ranks[rank] = 1
+        np.save(path + 'idle_ranks.npy', idle_ranks)
 
     def all_complete():
         for site in range(M):
@@ -308,16 +294,15 @@ if __name__ == "__main__":
         Sigma = np.zeros([n_len, n_len], dtype='complex64')
         target = np.zeros([n_batch, n_select], dtype='int32')
         denominator = np.zeros(n_batch, dtype='float32')
-        # print('recv sigma: ', Sigma.shape, Sigma.dtype, source_rank, n_batch, n_select, n_len)
         comm.Recv([Sigma, MPI.C_FLOAT_COMPLEX], source=source_rank, tag=5)
         comm.Recv([target, MPI.INT], source=source_rank, tag=6)
         comm.Recv([denominator, MPI.FLOAT], source=source_rank, tag=7)
         haf, haf_time, sigma_time = A_elem(Sigma, target, cp.array(denominator), max_memory_in_gb)
         comm.Send([cp.asnumpy(haf), MPI.C_FLOAT_COMPLEX], dest=source_rank, tag=8)
-        with FileLock(path + 'completed_MPS_sites.npy.lock'):
-            completed_sites = np.load(path + 'completed_MPS_sites.npy')
-            completed_sites[rank] = 1
-            np.save(path + 'completed_MPS_sites.npy', completed_sites)
+        with FileLock(path + 'idle_ranks.npy.lock'):
+            idle_ranks = np.load(path + 'idle_ranks.npy')
+            idle_ranks[rank] = 1
+            np.save(path + 'idle_ranks.npy', idle_ranks)
         try:
             keep_going = comm.recv(tag=100 + rank)
         except:

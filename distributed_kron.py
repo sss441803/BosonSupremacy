@@ -2,9 +2,7 @@ import numpy as np
 import cupy as cp
 from scipy.linalg import block_diag, sqrtm, schur
 import argparse
-import time
 from mpi4py import MPI
-from tqdm import tqdm
 import sys
 
 def nothing_function(object):
@@ -24,11 +22,11 @@ d = args['d']
 chi = args['chi']
 rootdir = args['dir']
 local_scratch = args['ls']
-gpn = args['gpn']
+gpn = args['gpn'] # GPUs per node
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
-cp.cuda.Device(rank % gpn).use()
+cp.cuda.Device(rank % gpn).use() # Set each rank to use a different GPU
 
 
 def sympmat(N, dtype=np.float64):
@@ -103,6 +101,7 @@ def williamson(V, tol=1e-11):
 def thermal_photons(nth, cutoff = 20):
     return 1 / (nth + 1) * (nth / (nth + 1)) ** np.arange(cutoff)
 
+# Generate and rank singular values, and the corresponding state
 def get_cumsum_kron(sq_cov, L, chi = 100, max_dim = 10 ** 5, cutoff = 6, err_tol = 10 ** (-12)):
     M = len(sq_cov) // 2
     mode = np.arange(L, M)
