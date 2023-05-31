@@ -1,7 +1,0 @@
-d=4
-dd=10
-chi=100
-rootdir='/home/minzhaoliu/BosonSupremacy/data_smallest/'
-python kron_cpu.py --d ${d} --chi ${chi} --dir ${rootdir}
-python MPS_cpu.py --d ${d} --chi ${chi} --dir ${rootdir}
-python sampling_cpu.py --d ${d} --dd ${dd} --chi ${chi} --dir ${rootdir}
