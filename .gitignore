@@ -4,3 +4,4 @@ job
 *.slurm
 *.npy
 *.lock
+analysis.ipynb
