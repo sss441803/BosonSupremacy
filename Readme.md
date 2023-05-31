@@ -248,6 +248,14 @@ The analysis code is located in the `analysis` folder:
 ```bash
 cd analysis
 ```
+XEB_photon_click (XEB_photon_number)
+Compute XEBs of samples.
+
+Correlation_photon_click (correlation_photon_number)
+Compute two-point correlation functions of photon click (photon number)
+
+Tot_probs_photon_number (Tot_probs_photon_click)
+Get the approximation of the probabilities of obtaining N photons (N clicks) for a given covariance matrix, which is needed to XEB for normalization.
 
 For Jiuzhang data analysis, we compute torontonians of samples from different photon click sectors. It saves “tors_{N}.npy” for the N sector. The code from https://github.com/polyquantique/torontonian-julia is needed. We will clone the repository minimally:
 ```bash
