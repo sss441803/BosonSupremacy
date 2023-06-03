@@ -3,7 +3,7 @@
 ### Summary
 This repository is for large-scale simulation of Gaussian boson sampling simulations, capable of simulating the largest quantum supremacy experiments to-date. We provide a supercomputer GPU implementation and a personal computer CPU only implementation.
 
-We tested our supercomputer GPU implementation on the Polaris supercomputer at Argonne Leadership Computing Facility. It uses exactly $M$ (number of optical modes) GPUs (ranks). For experiments with the largest number of output photons (Jiuzhang2-P65-5, Jiuzhang3-high, Borealis-M216-high, Borealis-M288), we obtain the MPS with bond dimension 10000 in 10 minutes, and sample 10 million samples in approximately 50 minutes, totalling 1 hour. Our simulation out-performs all bench marks including correlations upto the 6th order.
+We tested our supercomputer GPU implementation on the Polaris supercomputer at Argonne Leadership Computing Facility. It uses exactly $M$ (number of optical modes) GPUs (ranks). For experiments with the largest number of output photons (Jiuzhang2-P65-5, Jiuzhang3-high, Borealis-M216-high, Borealis-M288), we obtain the MPS with bond dimension 10000 in 10 minutes, and sample 10 million samples in approximately 60 minutes, totalling slightly over an hour. Our simulation out-performs all bench marks including correlations upto the 6th order.
 
 We tested our CPU implementation on an M1 Macbook Pro. For the most difficult experiment to match the two point correlation (Jiuzhang2-P65-2, see explanation in italic below), we obtain the MPS after approximate 3 hours. The bond dimension of 2000 is chosen to match the two-point correlation slope with the experiment, although the quality of higher-order correlation decreases.
 
