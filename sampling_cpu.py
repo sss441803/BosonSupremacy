@@ -173,7 +173,7 @@ if __name__ == "__main__":
     for i in range(M - 1):
         Lambda[:, i] = np.load(path + f"Lambda_{i}.npy")
     
-    for i in iterations:
+    for i in range(iterations):
         samples = np.zeros([0, M], dtype='int8')
         for begin_batch in range(0, N, n):
             end_batch = min(N, begin_batch + n)
