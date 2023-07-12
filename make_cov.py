@@ -98,6 +98,9 @@ if experiment == 'Borealis':
     # Xanadu case
     T = np.load(dir + "T.npy")
     r_array = np.load(dir + "r.npy")
+    # Borealis 3b 72-mode experiment uses the same squeezing parameters as the 216-mode experiment
+    if T.shape[0] == 72:
+        r_array = r_array[:72]
     cov = cov_from_T(r_array, T)
 
 
