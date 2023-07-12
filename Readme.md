@@ -19,6 +19,7 @@ The majority of the program is written using python, requiring the following pyt
 * tqdm
 * requests (for downloading data from Xanadu in `Xanadu_download.py`)
 * pandas (for loading the squeezing parameters from xlsx file of Jiuzhang3 in `make_cov.py`)
+* cvxpy and cvxopt (for obtaining the quantum-classical covariance matrix decomposition in  `get_decomposition.py`.)
 * strawberryfields (data analysis only)
 * thewalrus (data analysis only)
 
