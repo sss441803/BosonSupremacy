@@ -83,7 +83,7 @@ Later when we specify the output file, we use `> $outfile` at the end of a comma
 ### Downloading
 For downloading Borealis (Xanadu) data, execute the following python script:
 ```bash
-python -u Xanadu_download.py --dir $rootdir >> outfile
+python -u Xanadu_download.py --dir $rootdir >> $outfile
 ```
 This will download data to corresponding figure folders under `rootdir` (data used to create different figures). To choose which data to download, edit the `files_list` variable in `Xanadu_download.py`. Afterwards, we would like to rename the folders appropriately by executing the following commands (or rename using GUI file managers):
 ```bash
